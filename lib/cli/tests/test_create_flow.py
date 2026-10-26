@@ -159,3 +159,91 @@ def test_scaffolded_flow_run_with_trigger_rejects_a_missing_payload(
 
     with pytest.raises(Exception, match="No trigger payload provided"):
         scaffolded_flow_main.run_with_trigger()
+
+
+def _written_post() -> str:
+    return Path("output/post.md").read_text(encoding="utf-8")
+
+
+def test_scaffolded_flow_kickoff_runs_with_json_inputs_from_argv(
+    scaffolded_flow_main: ModuleType, monkeypatch: MonkeyPatch
+):
+    monkeypatch.setattr(sys, "argv", ["kickoff", '{"topic": "Quantum"}'])
+
+    scaffolded_flow_main.kickoff()
+
+    assert _written_post() == "# Post on Quantum"
+
+
+def test_scaffolded_flow_kickoff_without_inputs_uses_default_topic(
+    scaffolded_flow_main: ModuleType, monkeypatch: MonkeyPatch
+):
+    monkeypatch.setattr(sys, "argv", ["kickoff"])
+
+    scaffolded_flow_main.kickoff()
+
+    assert _written_post() == "# Post on AI Agents"
+
+
+@pytest.mark.parametrize(
+    ("argv_inputs", "message"),
+    [
+        ("{bad", r"Invalid inputs JSON: Expecting property name"),
+        ("[1]", r"Invalid inputs: expected a JSON object\."),
+        ('"Quantum"', r"Invalid inputs: expected a JSON object\."),
+    ],
+)
+def test_scaffolded_flow_kickoff_rejects_inputs_that_are_not_a_json_object(
+    scaffolded_flow_main: ModuleType,
+    monkeypatch: MonkeyPatch,
+    argv_inputs: str,
+    message: str,
+):
+    monkeypatch.setattr(sys, "argv", ["kickoff", argv_inputs])
+
+    with pytest.raises(SystemExit, match=message) as exc_info:
+        scaffolded_flow_main.kickoff()
+
+    assert """uv run kickoff '{"topic": "AI Agents"}'""" in str(exc_info.value)
+    assert not Path("output/post.md").exists()
+
+
+def test_scaffolded_flow_start_step_keeps_inputs_passed_to_flow_kickoff(
+    scaffolded_flow_main: ModuleType,
+):
+    # AMP calls `YourFlow().kickoff(inputs=...)` directly, not main.py's kickoff().
+    scaffolded_flow_main.ContentFlow().kickoff(inputs={"topic": "Robots"})
+
+    assert _written_post() == "# Post on Robots"
+
+
+def test_scaffolded_flow_run_with_trigger_uses_payload_topic(
+    scaffolded_flow_main: ModuleType, monkeypatch: MonkeyPatch
+):
+    monkeypatch.setattr(sys, "argv", ["run_with_trigger", '{"topic": "Rockets"}'])
+
+    scaffolded_flow_main.run_with_trigger()
+
+    assert _written_post() == "# Post on Rockets"
+
+
+def test_scaffolded_flow_run_with_trigger_without_topic_keeps_default(
+    scaffolded_flow_main: ModuleType, monkeypatch: MonkeyPatch
+):
+    monkeypatch.setattr(sys, "argv", ["run_with_trigger", '{"source": "slack"}'])
+
+    scaffolded_flow_main.run_with_trigger()
+
+    assert _written_post() == "# Post on AI Agents"
+
+
+def test_scaffolded_flow_docs_tell_how_to_pass_inputs(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+):
+    monkeypatch.chdir(tmp_path)
+    create_flow("Demo Flow")
+
+    agents_md = (tmp_path / "demo_flow" / "AGENTS.md").read_text(encoding="utf-8")
+    readme = (tmp_path / "demo_flow" / "README.md").read_text(encoding="utf-8")
+    assert "`uv run kickoff '{\"topic\":\"...\"}'`" in agents_md
+    assert "uv run kickoff '{\"topic\": \"Quantum Computing\"}'" in readme
